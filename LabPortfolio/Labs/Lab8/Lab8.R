@@ -221,3 +221,139 @@ pca_formula <- paste0("log(median_value) ~ ",
 pca_model <- lm(formula = pca_formula, data = dfw_pca)
 
 summary(pca_model)
+
+#-------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
+#LAB SUBMISSION
+#WALKER 8.2.2 recreation
+
+#Seattle metro counties
+smc <- c("King", "Snohomish", "Pierce")
+
+variables_to_get <- c(
+  median_value = "B25077_001",
+  median_rooms = "B25018_001",
+  median_income = "DP03_0062",
+  total_population = "B01003_001",
+  median_age = "B01002_001",
+  pct_college = "DP02_0068P",
+  pct_foreign_born = "DP02_0094P",
+  pct_white = "DP05_0077P",
+  median_year_built = "B25037_001",
+  percent_ooh = "DP04_0046P"
+)
+
+sm_data <- get_acs(
+  geography = "tract",
+  variables = variables_to_get,
+  state = "WA",
+  county = smc,
+  geometry = TRUE,
+  output = 'wide',
+  year = 2020
+) %>%
+  select(-NAME) #%>%
+  #st_transform(32138) #NAD83/TEXAS NORTH CENTRAL
+
+#Median Home Value Map
+mhv_map_sm <- ggplot(sm_data, aes(fill = log(median_incomeE))) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c(labels = scales::label_dollar()) +
+  theme_void() +
+  labs(fill = "Seattle Metro Area Median Household Income")
+
+
+
+#Median Home Value histogram
+mhv_histogram_sm <- ggplot(sm_data, aes(x = log(median_incomeE))) +
+  geom_histogram(alpha = 0.5, fill = "darkblue", color = "gray", bins = 100) +
+  theme_minimal() +
+  scale_x_continuous(labels = scales::label_number(accuracy = 0.1)) +
+  labs(x = "Seattle Metro Area log Median Household Income")
+
+mhv_map_sm + mhv_histogram_sm
+
+#-------------------------------------------------------------------------------
+#WALKER 8.2.5
+
+#Feature engineering
+sm_data_for_model <- sm_data %>%
+  mutate(pop_density = as.numeric(set_units(total_populationE / st_area(.),"1/km2")),
+         median_structure_age = 2018 - median_year_builtE) %>%
+  select(!ends_with("M")) %>%
+  rename_with(.fn = ~str_remove(.x, "E$")) %>%
+  na.omit()
+
+
+#model
+formula_sm <- paste0("log(median_value) ~ median_rooms + median_income + ",
+                  "pct_college + pct_foreign_born + pct_white + ",
+                  "median_age + median_structure_age + ",
+                  "percent_ooh + pop_density + total_population")
+
+model1_sm <- lm(formula = formula_sm, data = sm_data_for_model)
+
+summary(model1_sm)
+
+#correlation matrix
+sm_estimates <- sm_data_for_model %>%
+  select(-GEOID, -median_value, -median_year_built) %>%
+  st_drop_geometry()
+
+correlations_sm <- correlate(sm_estimates, method = "pearson")
+network_plot(correlations_sm)
+
+vif(model1_sm)
+
+#Model2
+formula2_sm <- paste0("log(median_value) ~ median_rooms + pct_college + ",
+                   "pct_foreign_born + pct_white + median_age + ",
+                   "median_structure_age + percent_ooh + pop_density + ",
+                   "total_population")
+
+model2_sm <- lm(formula = formula2_sm, data = sm_data_for_model)
+summary(model2_sm)
+
+vif(model2_sm)
+
+
+#PCA
+pca_sm <- prcomp(
+  formula = ~.,
+  data = sm_estimates,
+  scale. = TRUE,
+  center = TRUE
+)
+summary(pca_sm)
+
+
+pca_tibble_sm <- pca$rotation %>%
+  as_tibble(rownames = "predictor")
+
+pca_tibble_sm %>%
+  select(predictor:PC5) %>%
+  pivot_longer(PC1:PC5, names_to = "component", values_to = "value") %>%
+  ggplot(aes(x = value, y = predictor)) +
+  geom_col(fill = "darkgreen", color = "darkgreen", alpha = 0.5) +
+  facet_wrap(~component, nrow = 1) +
+  labs(y = NULL, x = "Value") +
+  theme_minimal()
+
+components_sm <- predict(pca_sm, sm_estimates)
+
+sm_pca <- sm_data_for_model %>%
+  select(GEOID, median_value) %>%
+  cbind(components_sm)
+
+ggplot(sm_pca, aes(fill = PC1)) +
+  geom_sf(color = NA) +
+  theme_void() +
+  scale_fill_viridis_c()
+
+pca_formula_sm <- paste0("log(median_value) ~ ",
+                      paste0('PC', 1:6, collapse = " + "))
+
+pca_model_sm <- lm(formula = pca_formula_sm, data = sm_pca)
+
+summary(pca_model_sm)

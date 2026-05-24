@@ -6,6 +6,7 @@
 library(ggplot2)
 library(tidycensus)
 library(tidyverse)
+library(scales)
 
 TotalPopulation_2020 <- read.csv("~/Documents/GEOG490/LabPortfolio/Labs/Lab2/data/nhgis0001_csv/nhgis0001_ds258_2020_state.csv")
 
@@ -85,3 +86,57 @@ mn_hh_income <- get_acs(
 )
 mn_hh_income
 
+
+#------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+#LAB SUBMISSON
+
+#Washington Data
+wa_data <- get_acs(
+  geography = "county",
+  state = "WA",
+  variables = "DP02_0068P",
+  geometry = TRUE
+)
+
+median(wa_data$estimate)
+
+#MOE visualization
+wa_val <- get_acs(
+  geography = "county",
+  state = "WA",
+  variables = c(value = "B25077_001"),
+  year = 2020
+) %>%
+  mutate(NAME = str_remove(NAME, " County, Washington"))
+
+
+ggplot(wa_val, aes(x = estimate, y = reorder(NAME, estimate))) +
+  geom_errorbar(aes(xmin = estimate - moe, xmax = estimate + moe)) +
+  geom_point(size = 3, color = "lightblue") +
+  theme_minimal(base_size = 12.5) +
+  labs(
+    title = "Median Home Value",
+    subtitle = "Counties in Washington",
+    x = "2016-2020 ACS estimate",
+    y=""
+  ) +
+  scale_x_continuous(labels = label_dollar())
+
+#population pyramid
+washington <- get_estimates(
+  geography = "state",
+  state = "WA",
+  product = "characteristics",
+  breakdown = c("SEX", "AGEGROUP"),
+  breakdown_labels = TRUE,
+  year = 2019
+)
+
+washington_filtered <- filter(washington, str_detect(AGEGROUP, "^Age"),
+                              SEX != "Both sexes") %>%
+  mutate(value = ifelse(SEX == "Male", -value, value))
+
+ggplot(washington_filtered, aes(x = value, y = AGEGROUP, fill = SEX)) +
+  geom_col()
