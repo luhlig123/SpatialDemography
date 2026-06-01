@@ -127,3 +127,4 @@ ggplot(la_entropy_geo, aes(x = minutes_to_downtown, y = entropy)) +
   labs(title = "Diversity Gradient, Los Angeles urbanized area",
        x = "Travel-time to downtown Los Angeles in minutes, census tracts",
        y = "entropy index")
+

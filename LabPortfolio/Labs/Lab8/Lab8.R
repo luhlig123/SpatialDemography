@@ -15,6 +15,11 @@ library(patchwork)
 library(units)
 library(corrr)
 library(car)
+library(spdep)
+library(spatialreg)
+library(GWmodel)
+library(plotly)
+
 
 #LAUDET AND IMAI CHAPTER 4
 #country gdp data
@@ -221,11 +226,173 @@ pca_formula <- paste0("log(median_value) ~ ",
 pca_model <- lm(formula = pca_formula, data = dfw_pca)
 
 summary(pca_model)
+#-------------------------------------------------------------------------------
+#LAB 9
+#8.3 -> Spatial Regression
+
+#calculate residuals
+dfw_data_for_model$residuals <- residuals(model2)
+
+#plot residuals
+ggplot(dfw_data_for_model, aes(x = residuals)) +
+  geom_histogram(bins = 100, alpha = 0.5, color = "navy", fill = "navy") +
+  theme_minimal()
+
+#moran test
+wts <- dfw_data_for_model %>%
+  poly2nb() %>%
+  nb2listw()
+
+moran.test(dfw_data_for_model$residuals, wts)
+
+dfw_data_for_model$lagged_residuals <- lag.listw(wts, dfw_data_for_model$residuals)
+
+ggplot(dfw_data_for_model, aes(x = residuals, y = lagged_residuals)) +
+  theme_minimal() +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "red")
+
+#lagged residuals model
+lag_model <- lagsarlm(
+  formula = formula2,
+  data = dfw_data_for_model,
+  listw = wts
+)
+
+summary(lag_model, Nagelkerke = TRUE)
+
+#error model
+error_model <- errorsarlm(
+  formula = formula2,
+  data = dfw_data_for_model,
+  listw = wts
+)
+
+summary(error_model, Nagelkerke = TRUE)
+
+moran.test(lag_model$residuals, wts)
+moran.test(error_model$residuals, wts)
+
+
+lm.LMtests(
+  model2,
+  wts,
+  test = c("LMerr", "LMlag", "RLMerr", "RLMlag")
+)
+
+#8.4 - GEOGRAPHICALLYY WEIGHTED REGRESSION
+
+dfw_data_sp <- dfw_data_for_model %>%
+  as_Spatial()
+
+#kernel bandwidth
+bw <- bw.gwr(
+  formula = formula2,
+  data = dfw_data_sp,
+  kernel = "bisquare",
+  adaptive = TRUE
+)
+
+#fitting and evaluating GWR
+formula2 <- paste0("log(median_value) ~ median_rooms + pct_college + ",
+                   "pct_foreign_born + pct_white + median_age + ",
+                   "median_structure_age + percent_ooh + pop_density + ",
+                   "total_population")
+
+gw_model <- gwr.basic(
+  formula = formula2,
+  data = dfw_data_sp,
+  bw = bw,
+  kernel = "bisquare",
+  adaptive = TRUE
+)
+
+names(gw_model)
+
+gw_model_results <- gw_model$SDF %>%
+  st_as_sf()
+
+names(gw_model_results)
+
+
+ggplot(gw_model_results, aes(fill = Local_R2)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c() +
+  theme_void()
+
+ggplot(gw_model_results, aes(fill = percent_ooh)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  labs(fill = "Local ? for \npercent_ooh")
+
+ggplot(gw_model_results, aes(fill = pop_density)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  labs(fill = "Local ? for \npopulation density")
+
+#8.5 - CLASSIFICATION AND CLUSTERING
+
+set.seed(1983)
+
+dfw_kmeans <- dfw_pca %>%
+  st_drop_geometry() %>%
+  select(PC1:PC8) %>%
+  kmeans(centers = 6)
+
+table(dfw_kmeans$cluster)
+
+dfw_clusters <- dfw_pca %>%
+  mutate(cluster = as.character(dfw_kmeans$cluster))
+
+ggplot(dfw_clusters, aes(fill = cluster)) +
+  geom_sf(size = 0.1) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_void() +
+  labs(fill = "Cluster")
+
+#plot clusters
+cluster_plot <- ggplot(dfw_clusters, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point() +
+  scale_color_brewer(palette = "Set1") +
+  theme_minimal()
+
+ggplotly(cluster_plot) %>%
+  layout(legend = list(orientation = "h", y = -0.15,
+                       x = 0.2, title = "Cluster"))
+
+#regionalization
+
+input_vars <- dfw_pca %>%
+  select(PC1:PC8) %>%
+  st_drop_geometry() %>%
+  as.data.frame()
+
+skater_nbrs <- poly2nb(dfw_pca, queen = TRUE)
+costs <- nbcosts(skater_nbrs, input_vars)
+skater_weights <- nb2listw(skater_nbrs, costs, style = "B")
+
+mst <- mstree(skater_weights)
+
+regions <- skater(
+  mst[,1:2],
+  input_vars,
+  ncuts = 7,
+  crit = 10
+)
+
+dfw_clusters$region <- as.character(regions$group)
+
+ggplot(dfw_clusters, aes(fill = region)) +
+  geom_sf(size = 0.1) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_void()
 
 #-------------------------------------------------------------------------------
 #-------------------------------------------------------------------------------
 #-------------------------------------------------------------------------------
-#LAB SUBMISSION
+#LAB 8 SUBMISSION
 #WALKER 8.2.2 recreation
 
 #Seattle metro counties
@@ -357,3 +524,120 @@ pca_formula_sm <- paste0("log(median_value) ~ ",
 pca_model_sm <- lm(formula = pca_formula_sm, data = sm_pca)
 
 summary(pca_model_sm)
+
+#-------------------------------------------------------------------------------
+#LAB 9 SUBMISSION
+
+#8.4 - GEOGRAPHICALLY WEIGHTED REGRESSION
+
+sm_data_sp <- sm_data_for_model %>%
+  as_Spatial()
+
+#kernel bandwidth
+bw <- bw.gwr(
+  formula = formula2,
+  data = sm_data_sp,
+  kernel = "bisquare",
+  adaptive = TRUE
+)
+
+#fitting and evaluating GWR
+formula2 <- paste0("log(median_value) ~ median_rooms + pct_college + ",
+                   "pct_foreign_born + pct_white + median_age + ",
+                   "median_structure_age + percent_ooh + pop_density + ",
+                   "total_population")
+
+gw_model <- gwr.basic(
+  formula = formula2,
+  data = sm_data_sp,
+  bw = bw,
+  kernel = "bisquare",
+  adaptive = TRUE
+)
+
+names(gw_model)
+
+gw_model_results <- gw_model$SDF %>%
+  st_as_sf()
+
+names(gw_model_results)
+
+
+sm_local_r2 <- ggplot(gw_model_results, aes(fill = Local_R2)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c() +
+  theme_void()
+
+sm_percent_ooh <- ggplot(gw_model_results, aes(fill = percent_ooh)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  labs(fill = "Local ? for \npercent_ooh")
+
+sm_population_density <- ggplot(gw_model_results, aes(fill = pop_density)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  labs(fill = "Seattle Metro Area \npopulation density")
+
+sm_population_density + sm_percent_ooh + sm_local_r2
+
+
+#8.5 - CLASSIFICATION AND CLUSTERING
+
+set.seed(1983)
+
+sm_kmeans <- sm_pca %>%
+  st_drop_geometry() %>%
+  select(PC1:PC8) %>%
+  kmeans(centers = 6)
+
+table(sm_kmeans$cluster)
+
+sm_clusters <- sm_pca %>%
+  mutate(cluster = as.character(sm_kmeans$cluster))
+
+ggplot(sm_clusters, aes(fill = cluster)) +
+  geom_sf(size = 0.1) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_void() +
+  labs(fill = "Cluster")
+
+#plot clusters
+cluster_plot <- ggplot(sm_clusters, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point() +
+  scale_color_brewer(palette = "Set1") +
+  theme_minimal()
+
+ggplotly(cluster_plot) %>%
+  layout(legend = list(orientation = "h", y = -0.15,
+                       x = 0.2, title = "Cluster"))
+
+#regionalization
+
+input_vars <- sm_pca %>%
+  select(PC1:PC8) %>%
+  st_drop_geometry() %>%
+  as.data.frame()
+
+
+
+skater_nbrs <- poly2nb(sm_pca, queen = TRUE)
+costs <- nbcosts(skater_nbrs, input_vars)
+skater_weights <- nb2listw(skater_nbrs, costs, style = "B")
+
+mst <- mstree(skater_weights)
+
+regions <- skater(
+  mst[,1:2],
+  input_vars,
+  ncuts = 7,
+  crit = 10
+)
+
+sm_clusters$region <- as.character(regions$group)
+
+ggplot(sm_clusters, aes(fill = region)) +
+  geom_sf(size = 0.1) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_void()
